@@ -1,0 +1,47 @@
+services:
+    node:
+        build:
+            context: ./
+            dockerfile: ./dockerfiles/node_server.dockerfile
+        hostname: node-server
+        ports:
+            - "8080:8080"
+        networks:
+            - monitoring-network
+    # keep the container alive
+        command: ['tail', '-f', '/dev/null']
+    grafana:
+        build:
+            context: ./
+            dockerfile: ./dockerfiles/grafana.dockerfile
+        hostname: grafana-server
+        ports:
+            - "3000:3000"
+        networks:
+            - monitoring-network
+        # depends_on:
+        #     prometheus:
+        #         condition: service_healthy
+
+
+    prometheus:
+        build:
+            context: ./
+            dockerfile: ./dockerfiles/prometheus.dockerfile
+        # This is the "localhost" for the container
+        hostname: prometheus-server
+        volumes:
+            - ../services/prometheus/prometheus.yaml:/etc/prometheus/prometheus.yml
+            - ../services/prometheus/alert.rules:/etc/prometheus/alert.rules
+        # TODO add persistent store for prometheus data
+        ports:
+          - "9090:9090"
+        networks:
+            - monitoring-network
+        # depends_on:
+        #     node:
+        #         condition: service_healthy
+
+networks:
+    monitoring-network:
+        driver: bridge
