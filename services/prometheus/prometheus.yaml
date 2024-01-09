@@ -1,11 +1,30 @@
+ # A scrape configuration containing exactly one endpoint to scrape from node_exporter running on a host:
+     # The job name is added as a label `job=<job_name>` to any timeseries scraped from this config.
+
+     # metrics_path defaults to '/metrics'
+     # scheme defaults to 'http'.
+
+
 global:
   scrape_interval: 30s
 
 
 scrape_configs:
-  # Prometheus itself
-  # This uses the static method to get metrics endpoints
-  - job_name: "prometheus"
-    honor_labels: true
-    static_configs:
-      - targets: ["prometheus:9090"]
+    # Prometheus itself
+    # This uses the static method to get metrics endpoints
+    -   job_name: "prometheus"
+        honor_labels: true
+        scrape_interval: 1m
+        static_configs:
+        -   targets: ["prometheus-server:9090"]
+    # TEST WORKER
+    -   job_name: "node-exporter"
+        honor_labels: true
+        static_configs:
+        -   targets: ["hostname:9100"]
+
+    #C# worker
+    # -   job_name: "nmdm-worker"
+    #     static_configs:
+    #       - targets:
+    #           - "nmdm-worker-hostname:"

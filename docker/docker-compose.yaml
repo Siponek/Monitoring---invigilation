@@ -1,46 +1,87 @@
+version: '3.8'
 services:
     node:
         build:
             context: ./
-            dockerfile: ./dockerfiles/node_server.dockerfile
-        hostname: node-server
+            dockerfile: ./dockerfiles/node_exporter.dockerfile
+        hostname: node-exporter
+        container_name: node-exporter-container
+        restart: unless-stopped
+        network_mode: host
+        pid: host
+        volumes:
+        - '/:/host:ro,rslave'
         ports:
-            - "8080:8080"
-        networks:
-            - monitoring-network
-    # keep the container alive
-        command: ['tail', '-f', '/dev/null']
+            - ${NODE_SERVER_PORT-9100}:${NODE_SERVER_PORT-9100}
+        command:
+        - '--path.rootfs=/host'
+        # keep the container alive
     grafana:
         build:
             context: ./
             dockerfile: ./dockerfiles/grafana.dockerfile
+        container_name: grafana-container
+        restart: unless-stopped
         hostname: grafana-server
+        volumes:
+        # https://grafana.com/docs/grafana/latest/setup-grafana/configure-docker/#configure-grafana-with-docker-secrets
+          - ../services/grafana/provisioning:/etc/grafana/provisioning
+        #   saving the grafana data to a volume
+          - grafana-data:/var/lib/grafana
+        env_file:
+            - ../env/grafana.env
+        environment:
+            - PROMETHEUS_HOSTNAME=http://${PROMETHEUS_HOSTNAME-prometheus-server}
+            - PROMETHEUS_SERVER_PORT=${PROMETHEUS_SERVER_PORT-9090}
         ports:
-            - "3000:3000"
+            - ${GRAFANA_SERVER_PORT-3000}:${GRAFANA_SERVER_PORT-3000}
         networks:
             - monitoring-network
-        # depends_on:
-        #     prometheus:
-        #         condition: service_healthy
-
+        depends_on:
+            prometheus:
+                condition: service_healthy
 
     prometheus:
         build:
             context: ./
             dockerfile: ./dockerfiles/prometheus.dockerfile
         # This is the "localhost" for the container
-        hostname: prometheus-server
+        hostname: ${PROMETHEUS_HOSTNAME-prometheus-server}
+        container_name: prometheus-container
+        restart: unless-stopped
+        # http://prometheus-server:9090
         volumes:
             - ../services/prometheus/prometheus.yaml:/etc/prometheus/prometheus.yml
             - ../services/prometheus/alert.rules:/etc/prometheus/alert.rules
+            # This is managed by docker - in theory easier to migrate
+            - prometheus_data:/prometheus
         # TODO add persistent store for prometheus data
         ports:
-          - "9090:9090"
+            - ${PROMETHEUS_SERVER_PORT-9090}:${PROMETHEUS_SERVER_PORT-9090}
         networks:
             - monitoring-network
+        healthcheck:
+            # test: ["CMD-SHELL", "wget http://localhost:${PROMETHEUS_SERVER_PORT-9090}/-/ready || exit 1"]
+            test: ["CMD-SHELL", "wget --spider --quiet --tries=1 --timeout=10 http://localhost:${PROMETHEUS_SERVER_PORT-9090}/-/ready || exit 1"]
+            interval: 10s
+            timeout: 15s
+            retries: 5
+            start_period: 40s
+
         # depends_on:
         #     node:
         #         condition: service_healthy
+
+
+volumes:
+    prometheus_data:
+        name: ${PROMETHEUS_VOLUME_NAME-prometheus_data_volume_name}
+        labels:
+            name: ${PROMETHEUS_VOLUME_LABEL_NAME-prometheus_data_volume_label_name}
+    grafana-data:
+        name: ${GRAFANA_VOLUME_NAME-grafana_data_volume_name}
+        labels:
+            name: ${GRAFANA_VOLUME_LABEL_NAME-grafana_data_volume_label_name}
 
 networks:
     monitoring-network:
