@@ -50,6 +50,11 @@ build:
 down:
 	$(DOCKER_COMPOSE) down
 
+.PHONY: fresh
+fresh:
+	$(DOCKER_COMPOSE) down --remove-orphans --volumes
+	$(DOCKER_COMPOSE) build --no-cache
+
 .PHONY: clean
 clean:
 	$(DOCKER_COMPOSE) down --remove-orphans --volumes
