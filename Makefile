@@ -2,9 +2,21 @@
 #? Settings and Variables (Works for windows 11)
 #? CURDIR is the directory of the Makefile, even if it is called from a subdirectory with make -C
 #
+
+# Makefile
+
+# Load .env file if it exists
+ifneq (,$(wildcard ./env/pipeline.env))
+    include ./env/pipeline.env
+    export
+endif
+
+
+
 DOCKER_COMPOSE_FILE := $(CURDIR)/docker/docker-compose.yaml
 ENV_FILE := $(CURDIR)/env/docker.env
-DOCKER_FLAGS := --file $(DOCKER_COMPOSE_FILE) --env-file $(ENV_FILE)
+DOCKER_LOGIN_ENV_FILE := $(CURDIR)/env/docker_login.env
+DOCKER_FLAGS := --file $(DOCKER_COMPOSE_FILE) --env-file $(ENV_FILE) --env-file $(DOCKER_LOGIN_ENV_FILE)
 DOCKER_COMPOSE := docker compose $(DOCKER_FLAGS)
 NPX_PREFIX := npx --prefix $(CURDIR)/app
 # include $(CURDIR)/env/docker.env
@@ -58,3 +70,11 @@ fresh:
 .PHONY: clean
 clean:
 	$(DOCKER_COMPOSE) down --remove-orphans --volumes
+
+.PHONY: d-login
+d-login:
+	echo "$(IASON_REGISTRY_PASSWORD)" | docker login $(IASON_REGISTRY) --username $(IASON_REGISTRY_USER) --password-stdin
+	echo "login completed"
+.PHONY: reset
+reset:
+	curl -X POST http://localhost:9090/-/reload
