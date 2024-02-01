@@ -22,14 +22,14 @@ create_template_files_from_envs() {
             echo "$template_file already exists, skipping..."
         else
             if [ -f "$env_file" ]; then
-                while IFS= read -r line || [[ -n "$line" ]]; do
+                while IFS=":" read -r key value; do
                     # if line is empty, just append newline
-                    if [ -z "$line" ]
+                    if [ -z "$key" ]
                     then
                         echo "" >> "$template_file"
                         continue
                     else
-                        echo "${line%%=*}=" >> "$template_file"
+                        echo "${key}:" >> "$template_file"
                     fi
 
                 done < "$env_file"
