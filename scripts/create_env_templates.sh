@@ -41,9 +41,12 @@ create_template_files_from_envs() {
     done
     echo "All .env.template files processed."
 }
-env_folder="env"
-env_templates=("docker.env.template" "docker_login.env.template" "grafana.env.template" "pipeline.env.template")
-env_files=("docker.env" "docker_login.env" "grafana.env" "pipeline.env")
+env_folder="../env"
+env_files=("docker.env" "docker_login.env" "grafana.env" "pipeline.env" "thanos.env")
+env_templates=()
+for env_file in "${env_files[@]}"; do
+    env_templates+=("${env_file}.template")
+done
 
 env_templates=("${env_templates[@]/#/$env_folder/}")
 env_files=("${env_files[@]/#/$env_folder/}")
