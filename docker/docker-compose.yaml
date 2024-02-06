@@ -5,6 +5,63 @@ services:
     #     build:
     #         context: ./
     #         dockerfile: ./dockerfiles/zipkin.dockerfile
+
+    # Thanos or timescaleDB
+    thanos-sidecar:
+        build:
+            context: ./
+            dockerfile: ./dockerfiles/thanos.dockerfile
+        volumes:
+            - prometheus_data:/prometheus
+            - ../services/prometheus:/etc/prometheus
+            - ../services/thanos:/etc/thanos
+        container_name: sidecar-container
+        hostname: sidecar
+        restart: unless-stopped
+        env_file:
+            - ../env/thanos.env
+        command:
+            - sidecar
+            - "--prometheus.url=http://${PROMETHEUS_HOSTNAME-prometheus-server}:${PROMETHEUS_SERVER_PORT-9090}"
+            - "--prometheus.http-client-file=/etc/thanos/http_client_config.yaml"
+            - "--tsdb.path=/prometheus"
+            # it will sync all older existing blocks from Prometheus local storage on startup.
+            # Overidding the default prometheus compating blocks
+            -  "--shipper.upload-compacted"
+            - "--reloader.rule-dir=/etc/thanos"
+            - "--reloader.config-file=/etc/thanos/config_env.yaml"
+            - "--reloader.config-envsubst-file=/etc/thanos/config.yaml"
+            - "--objstore.config-file=/etc/thanos/bucket.yaml"
+
+        networks:
+            - monitoring-network
+        depends_on:
+            - prometheus
+
+    thanos-query:
+        build:
+            context: ./
+            dockerfile: ./dockerfiles/thanos.dockerfile
+        container_name: thanos-query-container
+        ports:
+        # Expose Thanos Query UI
+        - "10902:10902"
+        # gRPC server port (for internal communication)
+        - "10901:10901"
+        command:
+        - query
+        - --http-address=0.0.0.0:10902
+        - --grpc-address=0.0.0.0:10901
+        # Adjust this label to match your Prometheus replica label, if used.
+        - --query.replica-label=prometheus_replica
+        # Address of Thanos Sidecar gRPC server. Adjust if running on separate hosts.
+        - --store=sidecar:10901
+        # Add --store flags for each Thanos Store API you have (e.g., Sidecars, Thanos Store Gateways)
+        depends_on:
+        - thanos-sidecar
+        networks:
+        - monitoring-network
+
     nmdm_worker:
         build:
             context: ./
@@ -34,7 +91,9 @@ services:
     #Grabing the containers metrics
 
     cadvisor:
-        image: gcr.io/cadvisor/cadvisor:latest
+        build:
+            context: ./
+            dockerfile: ./dockerfiles/cadvisor.dockerfile
         container_name: cadvisor-container
         ports:
         - 8080:8080
@@ -42,6 +101,7 @@ services:
         - /var/run:/var/run:rw
         - /var/lib/docker/:/var/lib/docker:ro
         - /sys:/sys:ro
+        - /etc/machine-id:/etc/machine-id:ro
         - /:/rootfs:ro
         depends_on:
         - nmdm_worker
@@ -61,8 +121,6 @@ services:
             - /proc:/host/proc:ro
             - /sys:/host/sys:ro
             - /:/rootfs:ro
-        ports:
-            - ${NODE_SERVER_PORT-9100}:${NODE_SERVER_PORT-9100}
         command:
             # - '--path.rootfs=/host'
             - '--path.procfs=/host/proc'
@@ -94,7 +152,6 @@ services:
         depends_on:
             prometheus:
                 condition: service_healthy
-
     prometheus:
         build:
             context: ./
@@ -115,13 +172,19 @@ services:
         command:
             - '--config.file=/etc/prometheus/prometheus.yml'
             - '--storage.tsdb.path=/prometheus'
+            - '--storage.tsdb.retention.time=15d'
+            # disabling promethus native compation
+            - '--storage.tsdb.min-block-duration=2h'
+            - '--storage.tsdb.max-block-duration=2h'
+
             - '--web.console.libraries=/etc/prometheus/console_libraries'
             - '--web.console.templates=/etc/prometheus/consoles'
             - '--web.enable-lifecycle'
+            - '--web.enable-admin-api'
         ports:
             # Host:Container
             - ${PROMETHEUS_SERVER_PORT-9090}:9090
-            # - ${NODE_SERVER_PORT-9100}:9100
+            # - ${NODE_EXPORTER_PORT-9100}:9100
             # - ${PROMETHEUS_ALERTMANAGER_PORT-9093}:9093
             # - ${GRAFANA_SERVER_PORT-3000}:3000
             # - ${NMDM_SERVER_PORT-80}:80
@@ -129,17 +192,11 @@ services:
         networks:
             - monitoring-network
         healthcheck:
-            # test: ["CMD-SHELL", "wget http://localhost:${PROMETHEUS_SERVER_PORT-9090}/-/ready || exit 1"]
             test: ["CMD-SHELL", "wget --spider --quiet --tries=1 --timeout=10 http://localhost:${PROMETHEUS_SERVER_PORT-9090}/-/ready || exit 1"]
             interval: 10s
             timeout: 15s
             retries: 5
             start_period: 40s
-
-        # depends_on:
-        #     node:
-        #         condition: service_healthy
-
 
 volumes:
     prometheus_data:

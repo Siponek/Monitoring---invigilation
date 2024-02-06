@@ -1,55 +1,31 @@
  # A scrape configuration containing exactly one endpoint to scrape from node_exporter running on a host:
      # The job name is added as a label `job=<job_name>` to any timeseries scraped from this config.
-
      # metrics_path defaults to '/metrics'
      # scheme defaults to 'http'.
 
 
 global:
   scrape_interval: 5s
-
+  external_labels:
+    cluster: "TEST-CLUSTER"
+    replica: "REPLICA_1"
 
 scrape_configs:
     # TODO template generation for different ports
-
+    # Use thanos reload for that
     # Prometheus itself
     # This uses the static method to get metrics endpoints
-    -   job_name: "prometheus-job"
-        honor_labels: false
-        scrape_interval: 15s
-        static_configs:
-        -   targets: ["localhost:9090"]
-        # -   targets: ["prometheus-server:9090"]
 
     -   job_name: "node-exporter-job"
         honor_labels: false
         static_configs:
         -   targets: ["host-gateway:9100"]
-        # -   targets: ["192.168.25.25:9100"]
-        # -   targets: ["host.docker.internal:9100"]
-        # -   targets: ["node-exporter:9100"]
-    # -   job_name: "nmdm-main"
-    #     honor_labels: false
-    #     static_configs:
-    #     -   targets: ["host-gateway:9100"]
 
     -   job_name: "cadvisor"
         honor_labels: false
         static_configs:
         - targets: ["host-gateway:8080"]
-    # - targets: ["cadvisor:8080"]
-
-    # Worker does not export enything to /metrics
-    # -   job_name: "nmdm-worker"
-    #     honor_labels: false
-    #     static_configs:
-    #     -   targets: ["host-gateway:4180"]
-        # -   targets: ["host-gateway:80"]
-
-
-
-# remote_write:
-#   - url: '<Your Prometheus remote_write endpoint>'
-#     basic_auth:
-#       username: '<Your Grafana Username>'
-#       password: '<Your Grafana API key>'
+        metric_relabel_configs:
+            - source_labels: [__name__]
+              action: keep
+              regex: 'container_cpu_usage_seconds_total|container_memory_usage_bytes'
