@@ -15,11 +15,15 @@ endif
 
 DOCKER_COMPOSE_FILE := $(CURDIR)/docker/docker-compose.yaml
 ENV_FILE := $(CURDIR)/env/docker.env
+THANOS_ENV_FILE := $(CURDIR)/env/thanos.env
 DOCKER_LOGIN_ENV_FILE := $(CURDIR)/env/docker_login.env
-DOCKER_FLAGS := --file $(DOCKER_COMPOSE_FILE) --env-file $(ENV_FILE) --env-file $(DOCKER_LOGIN_ENV_FILE)
+DOCKER_FLAGS := --file $(DOCKER_COMPOSE_FILE) \
+				--env-file $(ENV_FILE)\
+				--env-file $(DOCKER_LOGIN_ENV_FILE)\
+				--env-file $(THANOS_ENV_FILE)
+
 DOCKER_COMPOSE := docker compose $(DOCKER_FLAGS)
 NPX_PREFIX := npx --prefix $(CURDIR)/app
-# include $(CURDIR)/env/docker.env
 
 .PHONY: print
 print:
