@@ -1,0 +1,247 @@
+version: '3.8'
+services:
+    thanos-sidecar:
+        build:
+            context: ./
+            dockerfile: ./dockerfiles/thanos.dockerfile
+        # a hack so prometheus and thanos can share the same volume
+        user: "65534:65534"
+        volumes:
+            - prometheus_data:/prometheus
+            - ../services/prometheus:/etc/prometheus
+            - ../services/thanos:/etc/thanos
+        container_name: sidecar-container
+        hostname: sidecar
+        restart: unless-stopped
+        env_file:
+            - ../env/thanos.env
+        command:
+            - sidecar
+            - "--prometheus.url=http://${PROMETHEUS_HOSTNAME-prometheus-server}:${PROMETHEUS_SERVER_PORT-9090}"
+            - "--prometheus.http-client-file=/etc/thanos/http_client_config.yaml"
+            - "--tsdb.path=/prometheus"
+            # it will sync all older existing blocks from Prometheus local storage on startup.
+            # Overidding the default prometheus compating blocks
+            -  "--shipper.upload-compacted"
+            - "--reloader.rule-dir=/etc/thanos"
+            - "--reloader.config-file=/etc/thanos/config_env.yaml"
+            - "--reloader.config-envsubst-file=/etc/thanos/config.yaml"
+            - "--objstore.config-file=/etc/thanos/bucket.yaml"
+        networks:
+            - monitoring-network
+        depends_on:
+            - prometheus
+    # Store Gateway so thanos query has an endpoint to s3 historical data
+    thanos-store:
+        user: "root:root"
+        build:
+            context: ./
+            dockerfile: ./dockerfiles/thanos.dockerfile
+        container_name: store-container
+        hostname: store
+        volumes:
+            - ../services/thanos:/etc/thanos
+        command:
+            - store
+            - "--data-dir=/thanos/store"
+            - "--objstore.config-file=/etc/thanos/bucket.yaml"
+            - "--grpc-address=0.0.0.0:10901"
+        depends_on:
+        - thanos-sidecar
+        networks:
+        - monitoring-network
+
+    thanos-query:
+        build:
+            context: ./
+            dockerfile: ./dockerfiles/thanos.dockerfile
+        container_name: query-container
+        ports:
+        # Expose Thanos Query UI
+        - "10902:10902"
+        # gRPC server port (for internal communication)
+        - "10901:10901"
+        command:
+        - query
+        - --http-address=0.0.0.0:10902
+        - --grpc-address=0.0.0.0:10901
+        # Adjust this label to match your Prometheus replica label, if used.
+        - --query.replica-label=prometheus_replica
+        # Address of Thanos Sidecar gRPC server. Adjust if running on separate hosts.
+        - --store=sidecar:10901
+        - --store=store:10901
+        # Add --store flags for each Thanos Store API you have (e.g., Sidecars, Thanos Store Gateways)
+        depends_on:
+        - thanos-sidecar
+        networks:
+        - monitoring-network
+
+    nmdm_worker:
+        build:
+            context: ./
+            dockerfile: ./dockerfiles/nmdm.dockerfile
+            args:
+                - IASON_REGISTRY=${IASON_REGISTRY}
+        env_file:
+            - ../env/docker_login.env
+
+        container_name: nmdm-worker-container
+        restart: unless-stopped
+        command: ["dotnet", "bin/nmdm-worker.dll"]
+
+    nmdm_client:
+        build:
+            context: ./
+            dockerfile: ./dockerfiles/nmdm.dockerfile
+            args:
+                - IASON_REGISTRY=${IASON_REGISTRY}
+        env_file:
+            - ../env/docker_login.env
+        container_name: nmdm-container
+        ports:
+          - 4180:80
+        restart: unless-stopped
+
+    #Grabing the containers metrics
+
+    cadvisor:
+        build:
+            context: ./
+            dockerfile: ./dockerfiles/cadvisor.dockerfile
+        container_name: cadvisor-container
+        entrypoint: ["/usr/bin/cadvisor",
+                       "-logtostderr",
+                       "--log_cadvisor_usage=false",
+                       "--allow_dynamic_housekeeping=true",
+                       "--event_storage_event_limit=default=0",
+                       "--event_storage_age_limit=default=0",
+                       "--disable_metrics=advtcp,app,cpu,cpuLoad,cpu_topology,cpuset,disk,diskIO,hugetlb,memory,memory_numa,network,oom_event,percpu,perf_event,process,referenced_memory,resctrl,sched,tcp,udp",
+                        "--enable_metrics=cpu,memory",
+                    #    "--docker_only",
+                       "--store_container_labels=false",
+                       "--whitelisted_container_labels=io.kubernetes.container.name,io.kubernetes.pod.name,io.kubernetes.pod.namespace"
+         ]
+        ports:
+        - 8080:8080
+        volumes:
+        - /var/run:/var/run:rw
+        - /var/lib/docker/:/var/lib/docker:ro
+        - /sys:/sys:ro
+        - /etc/machine-id:/etc/machine-id:ro
+        - /:/rootfs:ro
+        healthcheck:
+            test: ["CMD-SHELL", "wget --spider --quiet --tries=1 --timeout=10 http://localhost:8080/healthz || exit 1"]
+            interval: 10s
+            timeout: 15s
+            retries: 5
+            start_period: 40s
+        depends_on:
+        - nmdm_worker
+
+
+    # Grabing the host metrics
+    node:
+        build:
+            context: ./
+            dockerfile: ./dockerfiles/node_exporter.dockerfile
+        hostname: node-exporter
+        container_name: node-exporter-container
+        restart: unless-stopped
+        network_mode: host
+        pid: host
+        volumes:
+        # - '/:/host:ro,rslave'
+            - /proc:/host/proc:ro
+            - /sys:/host/sys:ro
+            - /:/rootfs:ro
+        command:
+            # - '--path.rootfs=/host'
+            - '--path.procfs=/host/proc'
+            - '--path.rootfs=/rootfs'
+            - '--path.sysfs=/host/sys'
+            - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+        # keep the container alive
+    grafana:
+        build:
+            context: ./
+            dockerfile: ./dockerfiles/grafana.dockerfile
+        container_name: grafana-container
+        restart: unless-stopped
+        hostname: grafana-server
+        volumes:
+        # https://grafana.com/docs/grafana/latest/setup-grafana/configure-docker/#configure-grafana-with-docker-secrets
+          - ../services/grafana/provisioning:/etc/grafana/provisioning
+        #   saving the grafana data to a volume
+          - grafana-data:/var/lib/grafana
+        env_file:
+            - ../env/grafana.env
+        environment:
+            - PROMETHEUS_HOSTNAME=http://${PROMETHEUS_HOSTNAME-prometheus-server}
+            - PROMETHEUS_SERVER_PORT=${PROMETHEUS_SERVER_PORT-9090}
+        ports:
+            - ${GRAFANA_SERVER_PORT-3000}:${GRAFANA_SERVER_PORT-3000}
+        networks:
+            - monitoring-network
+        depends_on:
+            prometheus:
+                condition: service_healthy
+    prometheus:
+        build:
+            context: ./
+            dockerfile: ./dockerfiles/prometheus.dockerfile
+        # This is the "localhost" for the container
+        hostname: ${PROMETHEUS_HOSTNAME-prometheus-server}
+        container_name: prometheus-container
+        restart: unless-stopped
+        extra_hosts:
+            - "host-gateway: ${HOST_IP-172.17.0.1}"
+        # http://prometheus-server:9090
+        volumes:
+            - ../services/prometheus/prometheus.yaml:/etc/prometheus/prometheus.yml
+            - ../services/prometheus/alert.rules:/etc/prometheus/alert.rules
+            # This is managed by docker - in theory easier to migrate
+            - prometheus_data:/prometheus
+        # TODO add persistent store for prometheus data
+        command:
+            - '--config.file=/etc/prometheus/prometheus.yml'
+            - '--storage.tsdb.path=/prometheus'
+            - '--storage.tsdb.retention.time=3h'
+            # disabling promethus native compation
+            - '--storage.tsdb.min-block-duration=2h'
+            - '--storage.tsdb.max-block-duration=2h'
+            - '--web.console.libraries=/etc/prometheus/console_libraries'
+            - '--web.console.templates=/etc/prometheus/consoles'
+            - '--web.enable-lifecycle'
+            - '--web.enable-admin-api'
+        ports:
+            # Host:Container
+            - ${PROMETHEUS_SERVER_PORT-9090}:9090
+            # - ${NODE_EXPORTER_PORT-9100}:9100
+            # - ${PROMETHEUS_ALERTMANAGER_PORT-9093}:9093
+            # - ${GRAFANA_SERVER_PORT-3000}:3000
+            # - ${NMDM_SERVER_PORT-80}:80
+
+        networks:
+            - monitoring-network
+        healthcheck:
+            test: ["CMD-SHELL", "wget --spider --quiet --tries=1 --timeout=10 http://localhost:${PROMETHEUS_SERVER_PORT-9090}/-/ready || exit 1"]
+            interval: 10s
+            timeout: 15s
+            retries: 5
+            start_period: 40s
+
+volumes:
+    prometheus_data:
+        name: ${PROMETHEUS_VOLUME_NAME-prometheus_data_volume_name}
+        labels:
+            name: ${PROMETHEUS_VOLUME_LABEL_NAME-prometheus_data_volume_label_name}
+    grafana-data:
+        name: ${GRAFANA_VOLUME_NAME-grafana_data_volume_name}
+        labels:
+            name: ${GRAFANA_VOLUME_LABEL_NAME-grafana_data_volume_label_name}
+
+networks:
+    monitoring-network:
+        driver: bridge
+
+
