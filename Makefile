@@ -17,12 +17,14 @@ DOCKER_COMPOSE_FILE := $(CURDIR)/docker/docker-compose.yaml
 ENV_FILE := $(CURDIR)/env/docker.env
 THANOS_ENV_FILE := $(CURDIR)/env/thanos.env
 DOCKER_LOGIN_ENV_FILE := $(CURDIR)/env/docker_login.env
-DOCKER_FLAGS := --file $(DOCKER_COMPOSE_FILE) \
-				--env-file $(ENV_FILE)\
-				--env-file $(DOCKER_LOGIN_ENV_FILE)\
-				--env-file $(THANOS_ENV_FILE)
+DOCKER_FLAG_FILE := --file $(DOCKER_COMPOSE_FILE)
+DOCKER_FLAGS_ENV := --env-file $(ENV_FILE)\
+					--env-file $(DOCKER_LOGIN_ENV_FILE)\
+					--env-file $(THANOS_ENV_FILE)
 
-DOCKER_COMPOSE := docker compose $(DOCKER_FLAGS)
+
+DOCKER_COMPOSE_RAW := docker compose $(DOCKER_FLAG_FILE)
+DOCKER_COMPOSE := $(DOCKER_COMPOSE_RAW) $(DOCKER_FLAGS_ENV)
 NPX_PREFIX := npx --prefix $(CURDIR)/app
 
 .PHONY: print
@@ -64,16 +66,16 @@ build:
 
 .PHONY: down
 down:
-	$(DOCKER_COMPOSE) down
+	$(DOCKER_COMPOSE_RAW) down
 
 .PHONY: fresh
 fresh:
-	$(DOCKER_COMPOSE) down --remove-orphans --volumes
+	$(DOCKER_COMPOSE_RAW) down --remove-orphans --volumes
 	$(DOCKER_COMPOSE) build --no-cache
 
 .PHONY: clean
 clean:
-	$(DOCKER_COMPOSE) down --remove-orphans --volumes
+	$(DOCKER_COMPOSE_RAW) down --remove-orphans --volumes
 
 .PHONY: d-login
 d-login:
@@ -82,3 +84,8 @@ d-login:
 .PHONY: reset
 reset:
 	curl -X POST http://localhost:9090/-/reload
+
+.PHONY: aws_b
+aws_b:
+	aws s3 ls s3://iason-thanos-test/ --profile szin --recursive --human-readable --summarize
+
