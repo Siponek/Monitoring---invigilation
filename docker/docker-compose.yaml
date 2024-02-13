@@ -1,16 +1,11 @@
 version: '3.8'
 services:
-
-    # zipkin:
-    #     build:
-    #         context: ./
-    #         dockerfile: ./dockerfiles/zipkin.dockerfile
-
-    # Thanos or timescaleDB
     thanos-sidecar:
         build:
             context: ./
             dockerfile: ./dockerfiles/thanos.dockerfile
+        # a hack so prometheus and thanos can share the same volume
+        user: "65534:65534"
         volumes:
             - prometheus_data:/prometheus
             - ../services/prometheus:/etc/prometheus
@@ -32,17 +27,35 @@ services:
             - "--reloader.config-file=/etc/thanos/config_env.yaml"
             - "--reloader.config-envsubst-file=/etc/thanos/config.yaml"
             - "--objstore.config-file=/etc/thanos/bucket.yaml"
-
         networks:
             - monitoring-network
         depends_on:
             - prometheus
+    # Store Gateway so thanos query has an endpoint to s3 historical data
+    thanos-store:
+        user: "root:root"
+        build:
+            context: ./
+            dockerfile: ./dockerfiles/thanos.dockerfile
+        container_name: store-container
+        hostname: store
+        volumes:
+            - ../services/thanos:/etc/thanos
+        command:
+            - store
+            - "--data-dir=/thanos/store"
+            - "--objstore.config-file=/etc/thanos/bucket.yaml"
+            - "--grpc-address=0.0.0.0:10901"
+        depends_on:
+        - thanos-sidecar
+        networks:
+        - monitoring-network
 
     thanos-query:
         build:
             context: ./
             dockerfile: ./dockerfiles/thanos.dockerfile
-        container_name: thanos-query-container
+        container_name: query-container
         ports:
         # Expose Thanos Query UI
         - "10902:10902"
@@ -56,6 +69,7 @@ services:
         - --query.replica-label=prometheus_replica
         # Address of Thanos Sidecar gRPC server. Adjust if running on separate hosts.
         - --store=sidecar:10901
+        - --store=store:10901
         # Add --store flags for each Thanos Store API you have (e.g., Sidecars, Thanos Store Gateways)
         depends_on:
         - thanos-sidecar
@@ -95,6 +109,18 @@ services:
             context: ./
             dockerfile: ./dockerfiles/cadvisor.dockerfile
         container_name: cadvisor-container
+        entrypoint: ["/usr/bin/cadvisor",
+                       "-logtostderr",
+                       "--log_cadvisor_usage=false",
+                       "--allow_dynamic_housekeeping=true",
+                       "--event_storage_event_limit=default=0",
+                       "--event_storage_age_limit=default=0",
+                       "--disable_metrics=advtcp,app,cpu,cpuLoad,cpu_topology,cpuset,disk,diskIO,hugetlb,memory,memory_numa,network,oom_event,percpu,perf_event,process,referenced_memory,resctrl,sched,tcp,udp",
+                        "--enable_metrics=cpu,memory",
+                    #    "--docker_only",
+                       "--store_container_labels=false",
+                       "--whitelisted_container_labels=io.kubernetes.container.name,io.kubernetes.pod.name,io.kubernetes.pod.namespace"
+         ]
         ports:
         - 8080:8080
         volumes:
@@ -103,8 +129,15 @@ services:
         - /sys:/sys:ro
         - /etc/machine-id:/etc/machine-id:ro
         - /:/rootfs:ro
+        healthcheck:
+            test: ["CMD-SHELL", "wget --spider --quiet --tries=1 --timeout=10 http://localhost:8080/healthz || exit 1"]
+            interval: 10s
+            timeout: 15s
+            retries: 5
+            start_period: 40s
         depends_on:
         - nmdm_worker
+
 
     # Grabing the host metrics
     node:
@@ -172,11 +205,10 @@ services:
         command:
             - '--config.file=/etc/prometheus/prometheus.yml'
             - '--storage.tsdb.path=/prometheus'
-            - '--storage.tsdb.retention.time=15d'
+            - '--storage.tsdb.retention.time=3h'
             # disabling promethus native compation
             - '--storage.tsdb.min-block-duration=2h'
             - '--storage.tsdb.max-block-duration=2h'
-
             - '--web.console.libraries=/etc/prometheus/console_libraries'
             - '--web.console.templates=/etc/prometheus/consoles'
             - '--web.enable-lifecycle'
@@ -211,3 +243,5 @@ volumes:
 networks:
     monitoring-network:
         driver: bridge
+
+
