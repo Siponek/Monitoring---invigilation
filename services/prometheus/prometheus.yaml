@@ -2,8 +2,6 @@
      # The job name is added as a label `job=<job_name>` to any timeseries scraped from this config.
      # metrics_path defaults to '/metrics'
      # scheme defaults to 'http'.
-
-
 global:
   scrape_interval: 1m
   external_labels:
@@ -31,7 +29,9 @@ scrape_configs:
             #   action: keep
             # - source_labels: [container_label_com_docker_compose_config_hash,
             # dropping the id label results in out of order samples
-            # - regex: 'container_label_com_docker_compose_.*|container_label_maintainer|image|id|instance'
-            - regex: 'container_label_com_docker_compose_.*|container_label_maintainer|image|instance'
+            - regex: 'container_label_com_docker_compose_.*|container_label_maintainer|image|id|instance'
+            # - regex: 'container_label_com_docker_compose_.*|container_label_maintainer|image|instance'
             # - regex: '(container_label_com_docker_compose_.*)|id'
               action: labeldrop
+remote_write:
+  - url: "http://receiver:10928/api/v1/receive"

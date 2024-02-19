@@ -5,7 +5,7 @@ services:
             context: ./
             dockerfile: ./dockerfiles/thanos.dockerfile
         # a hack so prometheus and thanos can share the same volume
-        user: "65534:65534"
+        user: 65534:65534
         volumes:
             - prometheus_data:/prometheus
             - ../services/prometheus:/etc/prometheus
@@ -15,25 +15,31 @@ services:
         restart: unless-stopped
         env_file:
             - ../env/thanos.env
+        ports:
+            - ${THANOS_SIDECAR_PORT-10911}:${THANOS_SIDECAR_PORT-10911}
+        #! gRPC port, but default is still 10901 EVERYWHERE - BUG
+            - ${THANOS_SIDECAR_GRPC_PORT-10912}:${THANOS_SIDECAR_GRPC_PORT-10912}
+
         command:
             - sidecar
-            - "--prometheus.url=http://${PROMETHEUS_HOSTNAME-prometheus-server}:${PROMETHEUS_SERVER_PORT-9090}"
-            - "--prometheus.http-client-file=/etc/thanos/http_client_config.yaml"
-            - "--tsdb.path=/prometheus"
+            - --log.level=debug
+            - --prometheus.url=http://${PROMETHEUS_HOSTNAME-prometheus-server}:${PROMETHEUS_SERVER_PORT-9090}
+            - --prometheus.http-client-file=/etc/thanos/http_client_config.yaml
+            - --tsdb.path=/prometheus
             # it will sync all older existing blocks from Prometheus local storage on startup.
             # Overidding the default prometheus compating blocks
-            -  "--shipper.upload-compacted"
-            - "--reloader.rule-dir=/etc/thanos"
-            - "--reloader.config-file=/etc/thanos/config_env.yaml"
-            - "--reloader.config-envsubst-file=/etc/thanos/config.yaml"
-            - "--objstore.config-file=/etc/thanos/bucket.yaml"
+            - --shipper.upload-compacted
+            - --reloader.rule-dir=/etc/thanos
+            - --reloader.config-file=/etc/thanos/config_env.yaml
+            - --reloader.config-envsubst-file=/etc/thanos/config.yaml
+            - --objstore.config-file=/etc/thanos/bucket.yaml
         networks:
             - monitoring-network
         depends_on:
             - prometheus
     # Store Gateway so thanos query has an endpoint to s3 historical data
     thanos-store:
-        user: "root:root"
+        user: root:root
         build:
             context: ./
             dockerfile: ./dockerfiles/thanos.dockerfile
@@ -41,13 +47,54 @@ services:
         hostname: store
         volumes:
             - ../services/thanos:/etc/thanos
+        ports:
+            - ${THANOS_STORE_PORT-10930}:${THANOS_STORE_PORT-10930}
+            - ${THANOS_STORE_GRPC_PORT-10931}:${THANOS_STORE_GRPC_PORT-10931}
         command:
             - store
-            - "--data-dir=/thanos/store"
-            - "--objstore.config-file=/etc/thanos/bucket.yaml"
-            - "--grpc-address=0.0.0.0:10901"
-        depends_on:
-        - thanos-sidecar
+            - --data-dir=/thanos/store
+            - --objstore.config-file=/etc/thanos/bucket.yaml
+            - --grpc-address=0.0.0.0:10901
+        # healthcheck:
+        #     test: ["CMD", "curl", "-f", "http://localhost:${THANOS_STORE_PORT-10930}/-/ready"]
+        #     interval: 10s
+        #     timeout: 5s
+        #     retries: 3
+        networks:
+        - monitoring-network
+
+    thanos-receiver:
+        user: "root:root"
+        build:
+            context: ./
+            dockerfile: ./dockerfiles/thanos.dockerfile
+        container_name: receiver-container
+        hostname: receiver
+        volumes:
+            - ../services/thanos:/etc/thanos
+        ports:
+            # Default receive port
+            - ${THANOS_RECEIVER_RECEIVE_PORT-10921}:${THANOS_RECEIVER_RECEIVE_PORT-10921}
+            # For status/UI access
+            - ${THANOS_RECEIVER_STATUS_PORT-10922}:${THANOS_RECEIVER_STATUS_PORT-10922}
+            # Default remote write port
+            - ${THANOS_RECEIVER_REMOTE_WRITE_PORT-10928}:${THANOS_RECEIVER_REMOTE_WRITE_PORT-10928}
+            # Default gRPC port
+            - ${THANOS_RECEIVER_GRPC_PORT-10929}:${THANOS_RECEIVER_GRPC_PORT-10929}
+        command:
+            - receive
+            - --tsdb.path=/thanos/receiver
+            - --grpc-address=0.0.0.0:10901
+            - --http-address=0.0.0.0:${THANOS_RECEIVER_STATUS_PORT-10922}
+            - --remote-write.address=0.0.0.0:${THANOS_RECEIVER_REMOTE_WRITE_PORT-10928}
+            - --label=receive_cluster="${CLUSTER_NAME:?Error CLUSTER_NAME is not set}"
+            - --label=receive_replica="${REPLICA_NAME:?Error REPLICA_NAME is not set}"
+            - --objstore.config-file=/etc/thanos/bucket.yaml
+        healthcheck:
+            test: ["CMD-SHELL", "curl http://localhost:${THANOS_RECEIVER_STATUS_PORT-10922}/-/ready || exit 1"]
+            interval: 10s
+            timeout: 5s
+            retries: 3
         networks:
         - monitoring-network
 
@@ -56,25 +103,85 @@ services:
             context: ./
             dockerfile: ./dockerfiles/thanos.dockerfile
         container_name: query-container
+        hostname: query
         ports:
         # Expose Thanos Query UI
-        - "10902:10902"
+        - ${THANOS_QUERY_UI_PORT-10902}:${THANOS_QUERY_UI_PORT-10902}
         # gRPC server port (for internal communication)
-        - "10901:10901"
+        - ${THANOS_QUERY_GRPC_PORT-10901}:${THANOS_QUERY_GRPC_PORT-10901}
         command:
         - query
-        - --http-address=0.0.0.0:10902
-        - --grpc-address=0.0.0.0:10901
+        - --http-address=0.0.0.0:${THANOS_QUERY_UI_PORT-10902}
+        - --grpc-address=0.0.0.0:${THANOS_QUERY_GRPC_PORT-10901}
         # Adjust this label to match your Prometheus replica label, if used.
         - --query.replica-label=prometheus_replica
         # Address of Thanos Sidecar gRPC server. Adjust if running on separate hosts.
-        - --store=sidecar:10901
-        - --store=store:10901
+        - --endpoint=sidecar:10901
+        - --endpoint=store:10901
+        - --endpoint=receiver:10901
+        # healthcheck:
+        #     test: ["CMD", "curl", "-f", "http://localhost:${THANOS_QUERY_UI_PORT-10902}/-/ready"]
+        #     interval: 10s
+        #     timeout: 5s
+        #     retries: 3
         # Add --store flags for each Thanos Store API you have (e.g., Sidecars, Thanos Store Gateways)
         depends_on:
         - thanos-sidecar
+        - thanos-store
+        - thanos-receiver
+
         networks:
         - monitoring-network
+
+    thanos_query_frontend:
+        build:
+            context: ./
+            dockerfile: ./dockerfiles/thanos.dockerfile
+        container_name: thanos_query_frontend
+        command:
+        - query-frontend
+        - --log.level=info
+        - --log.format=logfmt
+        - --http-address=0.0.0.0:${THANOS_QUERY_FRONTEND_PORT-19090}
+        - --query-frontend.compress-responses
+        - --query-range.partial-response
+        - --query-frontend.downstream-url=http://query:${THANOS_QUERY_PORT-10902}
+        - --query-range.split-interval=24h
+        - --query-range.max-retries-per-request=5
+        - --query-frontend.log-queries-longer-than=5s
+        - --cache-compression-type=snappy
+        ports:
+        - ${THANOS_QUERY_FRONTEND_PORT-19090}:${THANOS_QUERY_FRONTEND_PORT-19090}
+        depends_on:
+        - thanos-query
+        
+    #Only one compactor for object storage is needed
+    thanos-compactor:
+        user: "root:root"
+        build:
+            context: ./
+            dockerfile: ./dockerfiles/thanos.dockerfile
+        container_name: thanos_compactor
+        restart: unless-stopped
+        volumes:
+            - ../services/thanos:/etc/thanos
+            - thanos_compact_data:/thanos/compact
+        command:
+            - compact
+            - --log.level=debug
+            - --log.format=logfmt
+            - --objstore.config-file=/etc/thanos/bucket.yaml
+            - --data-dir=/thanos/compact
+            - --consistency-delay=30m
+            - --retention.resolution-raw=30d
+            - --retention.resolution-5m=60d
+            - --retention.resolution-1h=120d
+            - --compact.concurrency=1
+            - --delete-delay=15m
+            - --wait
+            - --wait-interval=3m
+        ports:
+        - ${THANOS_COMPACTOR_PORT-10903}:${THANOS_COMPACTOR_PORT-10903}
 
     nmdm_worker:
         build:
@@ -97,13 +204,12 @@ services:
                 - IASON_REGISTRY=${IASON_REGISTRY}
         env_file:
             - ../env/docker_login.env
-        container_name: nmdm-container
+        container_name: nmdm-client-container
         ports:
           - 4180:80
         restart: unless-stopped
 
     #Grabing the containers metrics
-
     cadvisor:
         build:
             context: ./
@@ -116,13 +222,13 @@ services:
                        "--event_storage_event_limit=default=0",
                        "--event_storage_age_limit=default=0",
                        "--disable_metrics=advtcp,app,cpu,cpuLoad,cpu_topology,cpuset,disk,diskIO,hugetlb,memory,memory_numa,network,oom_event,percpu,perf_event,process,referenced_memory,resctrl,sched,tcp,udp",
-                        "--enable_metrics=cpu,memory",
+                       "--enable_metrics=cpu,memory",
                     #    "--docker_only",
                        "--store_container_labels=false",
                        "--whitelisted_container_labels=io.kubernetes.container.name,io.kubernetes.pod.name,io.kubernetes.pod.namespace"
          ]
         ports:
-        - 8080:8080
+        - ${CADVISOR_SERVER_PORT-8080}:${CADVISOR_SERVER_PORT-8080}
         volumes:
         - /var/run:/var/run:rw
         - /var/lib/docker/:/var/lib/docker:ro
@@ -137,7 +243,6 @@ services:
             start_period: 40s
         depends_on:
         - nmdm_worker
-
 
     # Grabing the host metrics
     node:
@@ -155,11 +260,11 @@ services:
             - /sys:/host/sys:ro
             - /:/rootfs:ro
         command:
-            # - '--path.rootfs=/host'
-            - '--path.procfs=/host/proc'
-            - '--path.rootfs=/rootfs'
-            - '--path.sysfs=/host/sys'
-            - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+            # - --path.rootfs=/host
+            - --path.procfs=/host/proc
+            - --path.rootfs=/rootfs
+            - --path.sysfs=/host/sys
+            - --collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)
         # keep the container alive
     grafana:
         build:
@@ -194,7 +299,7 @@ services:
         container_name: prometheus-container
         restart: unless-stopped
         extra_hosts:
-            - "host-gateway: ${HOST_IP-172.17.0.1}"
+            - "host-gateway: ${HOST_IP:?Error HOST_IP not set}"
         # http://prometheus-server:9090
         volumes:
             - ../services/prometheus/prometheus.yaml:/etc/prometheus/prometheus.yml
@@ -203,23 +308,19 @@ services:
             - prometheus_data:/prometheus
         # TODO add persistent store for prometheus data
         command:
-            - '--config.file=/etc/prometheus/prometheus.yml'
-            - '--storage.tsdb.path=/prometheus'
-            - '--storage.tsdb.retention.time=3h'
+            - --log.level=info
+            - --config.file=/etc/prometheus/prometheus.yml
+            - --storage.tsdb.path=/prometheus
+            - --storage.tsdb.retention.time=2h
             # disabling promethus native compation
-            - '--storage.tsdb.min-block-duration=2h'
-            - '--storage.tsdb.max-block-duration=2h'
-            - '--web.console.libraries=/etc/prometheus/console_libraries'
-            - '--web.console.templates=/etc/prometheus/consoles'
-            - '--web.enable-lifecycle'
-            - '--web.enable-admin-api'
+            - --storage.tsdb.min-block-duration=2h
+            - --storage.tsdb.max-block-duration=2h
+            - --web.console.libraries=/etc/prometheus/console_libraries
+            - --web.console.templates=/etc/prometheus/consoles
+            - --web.enable-lifecycle
+            - --web.enable-admin-api
         ports:
-            # Host:Container
-            - ${PROMETHEUS_SERVER_PORT-9090}:9090
-            # - ${NODE_EXPORTER_PORT-9100}:9100
-            # - ${PROMETHEUS_ALERTMANAGER_PORT-9093}:9093
-            # - ${GRAFANA_SERVER_PORT-3000}:3000
-            # - ${NMDM_SERVER_PORT-80}:80
+            - ${PROMETHEUS_SERVER_PORT-9090}:${PROMETHEUS_SERVER_PORT-9090}
 
         networks:
             - monitoring-network
@@ -229,8 +330,15 @@ services:
             timeout: 15s
             retries: 5
             start_period: 40s
+        depends_on:
+            - thanos-receiver
+            # thanos-receiver:
+            #     condition: service_healthy
+
 
 volumes:
+    thanos_compact_data:
+        name: thanos_compact_data
     prometheus_data:
         name: ${PROMETHEUS_VOLUME_NAME-prometheus_data_volume_name}
         labels:
