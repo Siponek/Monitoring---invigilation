@@ -14,14 +14,14 @@ endif
 
 
 DOCKER_COMPOSE_FILE := $(CURDIR)/docker/docker-compose.yaml
-ENV_FILE := $(CURDIR)/env/docker.env
-THANOS_ENV_FILE := $(CURDIR)/env/thanos.env
-DOCKER_LOGIN_ENV_FILE := $(CURDIR)/env/docker_login.env
+ENV_FOLDER := $(CURDIR)/env
+ENV_FILE := $(ENV_FOLDER)/docker.env
+THANOS_ENV_FILE := $(ENV_FOLDER)/thanos.env
+DOCKER_LOGIN_ENV_FILE := $(ENV_FOLDER)/docker_login.env
 DOCKER_FLAG_FILE := --file $(DOCKER_COMPOSE_FILE)
 DOCKER_FLAGS_ENV := --env-file $(ENV_FILE)\
 					--env-file $(DOCKER_LOGIN_ENV_FILE)\
 					--env-file $(THANOS_ENV_FILE)
-
 
 DOCKER_COMPOSE_RAW := docker compose $(DOCKER_FLAG_FILE)
 DOCKER_COMPOSE := $(DOCKER_COMPOSE_RAW) $(DOCKER_FLAGS_ENV)
@@ -66,7 +66,7 @@ build:
 
 .PHONY: down
 down:
-	$(DOCKER_COMPOSE_RAW) down
+	$(DOCKER_COMPOSE) down
 
 .PHONY: fresh
 fresh:
