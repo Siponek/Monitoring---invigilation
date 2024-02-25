@@ -12,7 +12,7 @@ ifneq (,$(wildcard ./env/pipeline.env))
 endif
 
 
-
+AWS_BUCKET := thanos-test
 DOCKER_COMPOSE_FILE := $(CURDIR)/docker/docker-compose.yaml
 ENV_FOLDER := $(CURDIR)/env
 ENV_FILE := $(ENV_FOLDER)/docker.env
@@ -79,7 +79,7 @@ clean:
 
 .PHONY: d-login
 d-login:
-	echo "$(IASON_REGISTRY_PASSWORD)" | docker login $(IASON_REGISTRY) --username $(IASON_REGISTRY_USER) --password-stdin
+	echo "$(LOCAL_REGISTRY_PASSWORD)" | docker login $(LOCAL_REGISTRY) --username $(LOCAL_REGISTRY_USER) --password-stdin
 	echo "login completed"
 .PHONY: reset
 reset:
@@ -87,5 +87,5 @@ reset:
 
 .PHONY: aws_b
 aws_b:
-	aws s3 ls s3://iason-thanos-test/ --profile szin --recursive --human-readable --summarize
+	aws s3 ls s3://$(AWS_BUCKET)/ --profile szin --recursive --human-readable --summarize
 

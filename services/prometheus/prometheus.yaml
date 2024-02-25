@@ -24,14 +24,10 @@ scrape_configs:
         static_configs:
         - targets: ["host-gateway:8080"]
         metric_relabel_configs:
-            # - source_labels: [__name__]
-            #   regex: 'container_cpu_usage_seconds_total|container_memory_usage_bytes|thanos.*'
-            #   action: keep
-            # - source_labels: [container_label_com_docker_compose_config_hash,
-            # dropping the id label results in out of order samples
+            - source_labels: [id]
+              regex: '^/(init.scope|system.slice.*)$'
+              action: drop
             - regex: 'container_label_com_docker_compose_.*|container_label_maintainer|image|id|instance'
-            # - regex: 'container_label_com_docker_compose_.*|container_label_maintainer|image|instance'
-            # - regex: '(container_label_com_docker_compose_.*)|id'
               action: labeldrop
 remote_write:
   - url: "http://receiver:10928/api/v1/receive"

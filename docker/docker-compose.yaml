@@ -154,7 +154,7 @@ services:
         - ${THANOS_QUERY_FRONTEND_PORT-19090}:${THANOS_QUERY_FRONTEND_PORT-19090}
         depends_on:
         - thanos-query
-        
+
     #Only one compactor for object storage is needed
     thanos-compactor:
         user: "root:root"
@@ -188,7 +188,7 @@ services:
             context: ./
             dockerfile: ./dockerfiles/nmdm.dockerfile
             args:
-                - IASON_REGISTRY=${IASON_REGISTRY}
+                - LOCAL_REGISTRY=${LOCAL_REGISTRY}
         env_file:
             - ../env/docker_login.env
 
@@ -201,7 +201,7 @@ services:
             context: ./
             dockerfile: ./dockerfiles/nmdm.dockerfile
             args:
-                - IASON_REGISTRY=${IASON_REGISTRY}
+                - LOCAL_REGISTRY=${LOCAL_REGISTRY}
         env_file:
             - ../env/docker_login.env
         container_name: nmdm-client-container
